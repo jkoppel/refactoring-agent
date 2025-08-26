@@ -121,102 +121,70 @@ export class RefactoringExecutor {
         return new Promise(async (resolve, reject) => {
             const refactoringSteps: string[] = [];
             let outputBuffer = '';
-            let errorBuffer = '';
             
             console.log(`Executing refactoring in ${targetDir}...`);
-            // console.log(`Running: claude -p "Run the top-level-refactorer agent" --permission-mode=acceptEdits`);
             console.log(`claude code path is ${this.claudeCodePath}`);
             
-            // Run claude with project mode and auto-accept edits
-            const childProcess = await execa(this.claudeCodePath, [
-                '-p',
-                'Run the representable-valid agent',
-                '--permission-mode=acceptEdits',
-                '--output-format=stream-json',
-                '--verbose',
-                '--model=sonnet',
-            ], {
-                cwd: targetDir,
-                env: {
-                    ...process.env,
-                    // Pass Nia API key if available
-                    ...(this.niaApiKey ? { NIA_API_KEY: this.niaApiKey } : {}),
-                    NO_COLOR: '1',
-                    FORCE_COLOR: '0',
-                },
-                stdio: 'inherit',              // Can make this more robust in the future
-                reject: false,                 // don't throw on nonzero exit
-                timeout: 60 * 60 * 1000,
-                buffer: false,
-            });
+            try {
+                // Run claude with project mode and auto-accept edits
+                const childProcess = execa(this.claudeCodePath, [
+                    '-p',
+                    'Run the representable-valid agent',
+                    '--permission-mode=acceptEdits',
+                    '--output-format=stream-json',
+                    '--verbose',
+                    '--model=sonnet',
+                ], {
+                    cwd: targetDir,
+                    env: {
+                        ...process.env,
+                        ...(this.niaApiKey ? { NIA_API_KEY: this.niaApiKey } : {}),
+                        NO_COLOR: '1',
+                        FORCE_COLOR: '0',
+                    },
+                    stdio: ['ignore', 'pipe', 'inherit'],
+                    timeout: 60 * 60 * 1000,
+                });
 
-            if (childProcess.timedOut) {
-                throw new Error('Refactoring process timed out after 1 hour');
+                // Parse NDJSON output for refactoring steps
+                const parser = ndjson.parse({ strict: false });
+                childProcess.stdout?.pipe(parser);
+
+                parser.on('data', (evt: any) => {
+                    const msg: string | undefined = evt?.message ?? evt?.text ?? evt?.event ?? evt?.data;
+                    if (typeof msg === 'string') {
+                        if ((msg.includes('Running') || msg.includes('Executing')) &&
+                            (msg.includes('agent') || msg.includes('command'))) {
+                            refactoringSteps.push(msg.trim());
+                        }
+                    }
+                });
+
+                parser.on('error', () => { /* ignore malformed lines */ });
+
+                const result = await childProcess;
+
+                if (result.exitCode === 0) {
+                    // Provide default steps if none were parsed
+                    if (refactoringSteps.length === 0) {
+                        refactoringSteps.push(
+                            'Executed representable-valid agent',
+                            'Applied representable/valid principle refactoring',
+                            'Fixed type safety and state management issues'
+                        );
+                    }
+                    resolve(refactoringSteps);
+                } else {
+                    reject(new Error(`Refactoring failed with exit code ${result.exitCode}`));
+                }
+
+            } catch (error) {
+                if (error instanceof Error && error.message.includes('timed out')) {
+                    reject(new Error('Refactoring process timed out after 1 hour'));
+                } else {
+                    reject(error);
+                }
             }
-
-            if (childProcess.exitCode !== 0) {
-                throw new Error(`Refactoring failed with code ${childProcess.exitCode}${childProcess.signal ? ` (signal ${childProcess.signal})` : ''}`);
-            }
-
-            // return resolve(refactoringSteps);
-
-            // // Mirror child logs to the parent TTY
-            // childProcess.stdout?.pipe(process.stdout);
-            // childProcess.stderr?.pipe(process.stderr);
-
-            // // Tee stdout so we can both keep a raw buffer and parse NDJSON
-            // const tee = new PassThrough();
-            // childProcess.stdout?.pipe(tee);
-            // tee.on('data', (chunk: Buffer) => { outputBuffer += chunk.toString(); });
-
-            // // Parse NDJSON objects safely (drops junk lines with strict:false)
-            // const parser = ndjson.parse({ strict: false });
-            // tee.pipe(parser);
-
-            // parser.on('data', (evt: any) => {
-            // const msg: string | undefined =
-            //     evt?.message ?? evt?.text ?? evt?.event ?? evt?.data;
-            // if (typeof msg === 'string') {
-            //     if (
-            //     (msg.includes('Running') || msg.includes('Executing')) &&
-            //     (msg.includes('agent') || msg.includes('command'))
-            //     ) {
-            //     refactoringSteps.push(msg.trim());
-            //     }
-            // }
-            // });
-            // parser.on('error', () => { /* ignore malformed lines */ });
-
-            // childProcess.stderr?.on('data', (chunk: Buffer) => {
-            // errorBuffer += chunk.toString();
-            // });
-
-            // const result = await childProcess; // resolves even on failure because reject:false
-
-            // if ((result as any).timedOut) {
-            // return reject(new Error('Refactoring process timed out after 1 hour'));
-            // }
-
-            // if (result.exitCode === 0) {
-            // if (refactoringSteps.length === 0) {
-            //     refactoringSteps.push(
-            //     'Executed data-unifier agent',
-            //     'Executed code-unifier agent',
-            //     'Executed initial-organizer agent',
-            //     'Executed organize command',
-            //     'Executed idea-lifter agent',
-            //     'Executed representable-valid agent',
-            //     );
-            // }
-            // return resolve(refactoringSteps);
-            // }
-
-            // // Non-zero exit
-            // const stderrText = typeof (result as any).stderr === 'string'
-            // ? (result as any).stderr
-            // : errorBuffer;
-
-            // return reject(new Error(`Refactoring failed with code ${result.exitCode}: ${stderrText}`));
         });
     }
 
