@@ -169,14 +169,19 @@ export class GitHubClient {
     /**
      * Push changes to a branch
      */
-    async pushChanges(git: SimpleGit, branchName: string): Promise<void> {
+    async pushChanges(git: SimpleGit, branchName: string, excludeFiles: string[] = []): Promise<void> {
         console.log(`Pushing changes to branch ${branchName}...`);
         
         // Create and checkout new branch
         await git.checkoutLocalBranch(branchName);
         
-        // Stage all changes
-        await git.add('.');
+        // Stage all changes except specified files
+        if (excludeFiles.length > 0) {
+            const excludePatterns = excludeFiles.map(file => `:!${file}`);
+            await git.add(['--all', '--', ...excludePatterns]);
+        } else {
+            await git.add('--all');
+        }
         
         // Commit changes
         const commitMessage = `Automated refactoring improvements

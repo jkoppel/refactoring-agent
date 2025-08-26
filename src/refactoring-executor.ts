@@ -8,6 +8,7 @@ export class RefactoringExecutor {
     private claudeCodePath: string;
     private agentsPath: string;
     private niaApiKey?: string;
+    private copiedFiles: Set<string> = new Set();
 
     constructor(claudeCodePath: string, niaApiKey?: string) {
         this.claudeCodePath = claudeCodePath;
@@ -20,6 +21,7 @@ export class RefactoringExecutor {
      * Setup Claude environment in target repository
      */
     async setupAgents(targetDir: string): Promise<void> {
+        this.copiedFiles.clear();
         const sourceClaudeDir = path.join(process.cwd(), '.claude');
         const targetClaudeDir = path.join(targetDir, '.claude');
 
@@ -30,7 +32,7 @@ export class RefactoringExecutor {
         const sourceAgentsDir = path.join(sourceClaudeDir, 'agents');
         const targetAgentsDir = path.join(targetClaudeDir, 'agents');
         if (await this.pathExists(sourceAgentsDir)) {
-            await this.copyDirectory(sourceAgentsDir, targetAgentsDir);
+            await this.copyDirectoryAndTrack(sourceAgentsDir, targetAgentsDir, targetDir);
             console.log('Agents copied to target repository');
         }
 
@@ -38,7 +40,7 @@ export class RefactoringExecutor {
         const sourceHooksDir = path.join(sourceClaudeDir, 'hooks');
         const targetHooksDir = path.join(targetClaudeDir, 'hooks');
         if (await this.pathExists(sourceHooksDir)) {
-            await this.copyDirectory(sourceHooksDir, targetHooksDir);
+            await this.copyDirectoryAndTrack(sourceHooksDir, targetHooksDir, targetDir);
             console.log('Hooks copied to target repository');
         }
 
@@ -46,7 +48,7 @@ export class RefactoringExecutor {
         const sourceCommandsDir = path.join(sourceClaudeDir, 'commands');
         const targetCommandsDir = path.join(targetClaudeDir, 'commands');
         if (await this.pathExists(sourceCommandsDir)) {
-            await this.copyDirectory(sourceCommandsDir, targetCommandsDir);
+            await this.copyDirectoryAndTrack(sourceCommandsDir, targetCommandsDir, targetDir);
             console.log('Commands copied to target repository');
         }
         
@@ -73,6 +75,7 @@ export class RefactoringExecutor {
      */
     private async setupNiaMCP(targetDir: string): Promise<void> {
         const mcpConfigPath = path.join(targetDir, '.claude', 'mcp_settings.json');
+        const relativePath = path.relative(targetDir, mcpConfigPath);
         
         const mcpConfig = {
             mcpServers: {
@@ -92,11 +95,33 @@ export class RefactoringExecutor {
         };
 
         await fs.writeFile(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+        this.copiedFiles.add(relativePath);
         console.log('Nia MCP server configured in target repository');
     }
 
     /**
-     * Recursively copy directory
+     * Recursively copy directory and track copied files
+     */
+    private async copyDirectoryAndTrack(source: string, destination: string, targetDir: string): Promise<void> {
+        await fs.mkdir(destination, { recursive: true });
+        const entries = await fs.readdir(source, { withFileTypes: true });
+
+        for (const entry of entries) {
+            const sourcePath = path.join(source, entry.name);
+            const destPath = path.join(destination, entry.name);
+
+            if (entry.isDirectory()) {
+                await this.copyDirectoryAndTrack(sourcePath, destPath, targetDir);
+            } else {
+                await fs.copyFile(sourcePath, destPath);
+                const relativePath = path.relative(targetDir, destPath);
+                this.copiedFiles.add(relativePath);
+            }
+        }
+    }
+
+    /**
+     * Recursively copy directory (legacy method)
      */
     private async copyDirectory(source: string, destination: string): Promise<void> {
         await fs.mkdir(destination, { recursive: true });
@@ -194,24 +219,38 @@ export class RefactoringExecutor {
     }
 
     /**
-     * Check if there are any changes after refactoring
+     * Check if there are any changes after refactoring (excluding copied setup files)
      */
     async checkForChanges(git: any): Promise<boolean> {
         const status = await git.status();
-        return status.files.length > 0;
+        const relevantFiles = status.files.filter((file: any) => !this.copiedFiles.has(file.path));
+        return relevantFiles.length > 0;
     }
 
     /**
-     * Get change statistics
+     * Get change statistics (excluding copied setup files)
      */
     async getChangeStats(git: any): Promise<{ filesModified: number; linesAdded: number; linesRemoved: number }> {
         const status = await git.status();
-        const diffStat = await git.diffSummary();
+        const relevantFiles = status.files.filter((file: any) => !this.copiedFiles.has(file.path));
+        
+        // Create pathspecs to exclude copied files
+        const excludePatterns = Array.from(this.copiedFiles).map(file => `:!${file}`);
+        const diffStat = excludePatterns.length > 0 
+            ? await git.diffSummary(['--', ...excludePatterns])
+            : await git.diffSummary();
         
         return {
-            filesModified: status.files.length,
+            filesModified: relevantFiles.length,
             linesAdded: diffStat.insertions,
             linesRemoved: diffStat.deletions
         };
+    }
+
+    /**
+     * Get the list of copied files that should be excluded from commits
+     */
+    getCopiedFiles(): string[] {
+        return Array.from(this.copiedFiles);
     }
 }
