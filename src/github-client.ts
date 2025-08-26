@@ -16,6 +16,41 @@ export class GitHubClient {
     }
 
     /**
+     * Retry wrapper for GitHub operations that may fail due to transient service errors
+     */
+    private async withGitHubRetry<T>(
+        operation: () => Promise<T>,
+        maxAttempts: number = 3,
+        retryDelay: number = 5000
+    ): Promise<T> {
+        const isGitHubTransientError = (error: Error): boolean => {
+            const message = error.message.toLowerCase();
+            return message.includes('service unavailable') ||
+                   message.includes('gh100') ||
+                   message.includes('gh200') ||
+                   message.includes('503') ||
+                   message.includes('502') ||
+                   message.includes('504') ||
+                   message.includes('timeout');
+        };
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return await operation();
+            } catch (error) {
+                if (attempt < maxAttempts && error instanceof Error && isGitHubTransientError(error)) {
+                    console.log(`GitHub operation attempt ${attempt} failed with transient error, retrying in ${retryDelay}ms...`);
+                    console.log(`Error: ${error.message}`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    continue;
+                }
+                throw error;
+            }
+        }
+        throw new Error('GitHub retry logic failed - this should never happen');
+    }
+
+    /**
      * Initialize and get authenticated user info
      */
     async initialize(): Promise<void> {
@@ -117,7 +152,10 @@ export class GitHubClient {
         const git: SimpleGit = simpleGit();
 
         console.log(`Cloning ${owner}/${repo} to ${tempDir}...`);
-        await git.clone(cloneUrl, tempDir, branch ? ['--branch', branch] : undefined);
+        
+        await this.withGitHubRetry(async () => {
+            await git.clone(cloneUrl, tempDir, branch ? ['--branch', branch] : undefined);
+        });
 
         const repoGit = simpleGit(tempDir);
         
