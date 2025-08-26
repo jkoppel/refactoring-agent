@@ -28,6 +28,7 @@
     "simple-git": "^3.22.0"
   },
   "devDependencies": {
+    "@types/ndjson": "^2.0.4",
     "@types/node": "^20.11.5",
     "typescript": "^5.3.3"
   },
