@@ -22,8 +22,10 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.3",
     "@octokit/rest": "^20.0.2",
-    "simple-git": "^3.22.0",
-    "dotenv": "^16.4.1"
+    "dotenv": "^16.4.1",
+    "execa": "^9.6.0",
+    "ndjson": "^2.0.0",
+    "simple-git": "^3.22.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.5",
