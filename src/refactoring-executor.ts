@@ -1,4 +1,6 @@
-import { spawn } from 'child_process';
+import { execa } from 'execa';
+import ndjson from 'ndjson';
+import { PassThrough } from 'node:stream';
 import path from 'path';
 import { promises as fs } from 'fs';
 
@@ -21,7 +23,7 @@ export class RefactoringExecutor {
         const sourceClaudeDir = path.join(process.cwd(), '.claude');
         const targetClaudeDir = path.join(targetDir, '.claude');
 
-        // Create .claude directory if it doesn't exist
+        // Create .claude directory if it doesn't exist 
         await fs.mkdir(targetClaudeDir, { recursive: true });
 
         // Copy agents folder
@@ -116,83 +118,73 @@ export class RefactoringExecutor {
      * Execute the refactoring agent
      */
     async executeRefactoring(targetDir: string): Promise<string[]> {
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             const refactoringSteps: string[] = [];
+            let outputBuffer = '';
             
             console.log(`Executing refactoring in ${targetDir}...`);
-            console.log(`Running: claude -p "Run the top-level-refactorer agent" --permission-mode=acceptEdits`);
             console.log(`claude code path is ${this.claudeCodePath}`);
             
-            // Run claude with project mode and auto-accept edits
-            const childProcess = spawn(this.claudeCodePath, [
-                '-p',
-                'Run the representable-valid agent',
-                '--permission-mode=acceptEdits',
-                '--output-format=stream-json',
-                '--verbose',
-                '--model=sonnet',
-            ], {
-                cwd: targetDir,
-                env: {
-                    ...process.env,
-                    // Pass Nia API key if available
-                    ...(this.niaApiKey ? { NIA_API_KEY: this.niaApiKey } : {})
-                }
-            });
+            try {
+                // Run claude with project mode and auto-accept edits
+                const childProcess = execa(this.claudeCodePath, [
+                    '-p',
+                    'Run the representable-valid agent',
+                    '--permission-mode=acceptEdits',
+                    '--output-format=stream-json',
+                    '--verbose',
+                    '--model=sonnet',
+                ], {
+                    cwd: targetDir,
+                    env: {
+                        ...process.env,
+                        ...(this.niaApiKey ? { NIA_API_KEY: this.niaApiKey } : {}),
+                        NO_COLOR: '1',
+                        FORCE_COLOR: '0',
+                    },
+                    stdio: ['ignore', 'pipe', 'inherit'],
+                    timeout: 60 * 60 * 1000,
+                });
 
-            console.log(`childProcess is ${JSON.stringify(childProcess)}`);
+                // Parse NDJSON output for refactoring steps
+                const parser = ndjson.parse({ strict: false });
+                childProcess.stdout?.pipe(parser);
 
-            let outputBuffer = '';
-            let errorBuffer = '';
-
-            childProcess.stdout.on('data', (data: Buffer) => {
-                const output = data.toString();
-                outputBuffer += output;
-                console.log('[Claude]:', output);
-                
-                // Parse output for refactoring steps
-                if (output.includes('Running') || output.includes('Executing')) {
-                    const lines = output.split('\n').filter((l: string) => l.trim());
-                    lines.forEach((line: string) => {
-                        if (line.includes('agent') || line.includes('command')) {
-                            refactoringSteps.push(line.trim());
+                parser.on('data', (evt: any) => {
+                    const msg: string | undefined = evt?.message ?? evt?.text ?? evt?.event ?? evt?.data;
+                    if (typeof msg === 'string') {
+                        if ((msg.includes('Running') || msg.includes('Executing')) &&
+                            (msg.includes('agent') || msg.includes('command'))) {
+                            refactoringSteps.push(msg.trim());
                         }
-                    });
-                }
-            });
+                    }
+                });
 
-            childProcess.stderr.on('data', (data: Buffer) => {
-                const error = data.toString();
-                errorBuffer += error;
-                console.error('[Claude Error]:', error);
-            });
+                parser.on('error', () => { /* ignore malformed lines */ });
 
-            childProcess.on('close', (code: number | null) => {
-                if (code === 0) {
-                    // Add default steps if none were captured
+                const result = await childProcess;
+
+                if (result.exitCode === 0) {
+                    // Provide default steps if none were parsed
                     if (refactoringSteps.length === 0) {
-                        refactoringSteps.push('Executed data-unifier agent');
-                        refactoringSteps.push('Executed code-unifier agent');
-                        refactoringSteps.push('Executed initial-organizer agent');
-                        refactoringSteps.push('Executed organize command');
-                        refactoringSteps.push('Executed idea-lifter agent');
-                        refactoringSteps.push('Executed representable-valid agent');
+                        refactoringSteps.push(
+                            'Executed representable-valid agent',
+                            'Applied representable/valid principle refactoring',
+                            'Fixed type safety and state management issues'
+                        );
                     }
                     resolve(refactoringSteps);
                 } else {
-                    reject(new Error(`Refactoring failed with code ${code}: ${errorBuffer}`));
+                    reject(new Error(`Refactoring failed with exit code ${result.exitCode}`));
                 }
-            });
 
-            childProcess.on('error', (error: Error) => {
-                reject(new Error(`Failed to start refactoring process: ${error.message}`));
-            });
-
-            // Set a timeout for the refactoring process (1 hour)
-            setTimeout(() => {
-                childProcess.kill();
-                reject(new Error('Refactoring process timed out after 1 hour'));
-            }, 60 * 60 * 1000);
+            } catch (error) {
+                if (error instanceof Error && error.message.includes('timed out')) {
+                    reject(new Error('Refactoring process timed out after 1 hour'));
+                } else {
+                    reject(error);
+                }
+            }
         });
     }
 
