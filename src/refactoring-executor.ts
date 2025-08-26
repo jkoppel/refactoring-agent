@@ -23,7 +23,7 @@ export class RefactoringExecutor {
         const sourceClaudeDir = path.join(process.cwd(), '.claude');
         const targetClaudeDir = path.join(targetDir, '.claude');
 
-        // Create .claude directory if it doesn't exist
+        // Create .claude directory if it doesn't exist 
         await fs.mkdir(targetClaudeDir, { recursive: true });
 
         // Copy agents folder
@@ -118,15 +118,17 @@ export class RefactoringExecutor {
      * Execute the refactoring agent
      */
     async executeRefactoring(targetDir: string): Promise<string[]> {
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             const refactoringSteps: string[] = [];
+            let outputBuffer = '';
+            let errorBuffer = '';
             
             console.log(`Executing refactoring in ${targetDir}...`);
             // console.log(`Running: claude -p "Run the top-level-refactorer agent" --permission-mode=acceptEdits`);
             console.log(`claude code path is ${this.claudeCodePath}`);
             
             // Run claude with project mode and auto-accept edits
-            const childProcess = execa(this.claudeCodePath, [
+            const childProcess = await execa(this.claudeCodePath, [
                 '-p',
                 'Run the representable-valid agent',
                 '--permission-mode=acceptEdits',
@@ -142,65 +144,79 @@ export class RefactoringExecutor {
                     NO_COLOR: '1',
                     FORCE_COLOR: '0',
                 },
-                stdout: ['pipe', 'inherit'],   // mirror to terminal + give us a stream
-                stderr: ['pipe', 'inherit'],   // same for stderr
+                stdio: 'inherit',              // Can make this more robust in the future
                 reject: false,                 // don't throw on nonzero exit
                 timeout: 60 * 60 * 1000,
                 buffer: false,
             });
 
-            // Mirror child logs to the parent TTY
-            childProcess.stdout?.pipe(process.stdout);
-            childProcess.stderr?.pipe(process.stderr);
+            if (childProcess.timedOut) {
+                throw new Error('Refactoring process timed out after 1 hour');
+            }
 
+            if (childProcess.exitCode !== 0) {
+                throw new Error(`Refactoring failed with code ${childProcess.exitCode}${childProcess.signal ? ` (signal ${childProcess.signal})` : ''}`);
+            }
 
-            let outputBuffer = '';
-            let errorBuffer = '';
+            // return resolve(refactoringSteps);
 
-            childProcess.stdout.on('data', (data: Buffer) => {
-                console.log('STDOUT data received');
-                const output = data.toString();
-                outputBuffer += output;
-                console.log('[Claude]:', output);
-                
-                // Parse output for refactoring steps
-                if (output.includes('Running') || output.includes('Executing')) {
-                    const lines = output.split('\n').filter((l: string) => l.trim());
-                    lines.forEach((line: string) => {
-                        if (line.includes('agent') || line.includes('command')) {
-                            refactoringSteps.push(line.trim());
-                        }
-                    });
-                }
-            });
+            // // Mirror child logs to the parent TTY
+            // childProcess.stdout?.pipe(process.stdout);
+            // childProcess.stderr?.pipe(process.stderr);
 
-            childProcess.stderr.on('data', (data: Buffer) => {
-                console.log('STDERR data received');
-                const error = data.toString();
-                errorBuffer += error;
-                console.error('[Claude Error]:', error);
-            });
+            // // Tee stdout so we can both keep a raw buffer and parse NDJSON
+            // const tee = new PassThrough();
+            // childProcess.stdout?.pipe(tee);
+            // tee.on('data', (chunk: Buffer) => { outputBuffer += chunk.toString(); });
 
-            childProcess.on('close', (code: number | null) => {
-                if (code === 0) {
-                    // Add default steps if none were captured
-                    if (refactoringSteps.length === 0) {
-                        refactoringSteps.push('Executed data-unifier agent');
-                        refactoringSteps.push('Executed code-unifier agent');
-                        refactoringSteps.push('Executed initial-organizer agent');
-                        refactoringSteps.push('Executed organize command');
-                        refactoringSteps.push('Executed idea-lifter agent');
-                        refactoringSteps.push('Executed representable-valid agent');
-                    }
-                    resolve(refactoringSteps);
-                } else {
-                    reject(new Error(`Refactoring failed with code ${code}: ${errorBuffer}`));
-                }
-            });
+            // // Parse NDJSON objects safely (drops junk lines with strict:false)
+            // const parser = ndjson.parse({ strict: false });
+            // tee.pipe(parser);
 
-            childProcess.on('error', (error: Error) => {
-                reject(new Error(`Failed to start refactoring process: ${error.message}`));
-            });
+            // parser.on('data', (evt: any) => {
+            // const msg: string | undefined =
+            //     evt?.message ?? evt?.text ?? evt?.event ?? evt?.data;
+            // if (typeof msg === 'string') {
+            //     if (
+            //     (msg.includes('Running') || msg.includes('Executing')) &&
+            //     (msg.includes('agent') || msg.includes('command'))
+            //     ) {
+            //     refactoringSteps.push(msg.trim());
+            //     }
+            // }
+            // });
+            // parser.on('error', () => { /* ignore malformed lines */ });
+
+            // childProcess.stderr?.on('data', (chunk: Buffer) => {
+            // errorBuffer += chunk.toString();
+            // });
+
+            // const result = await childProcess; // resolves even on failure because reject:false
+
+            // if ((result as any).timedOut) {
+            // return reject(new Error('Refactoring process timed out after 1 hour'));
+            // }
+
+            // if (result.exitCode === 0) {
+            // if (refactoringSteps.length === 0) {
+            //     refactoringSteps.push(
+            //     'Executed data-unifier agent',
+            //     'Executed code-unifier agent',
+            //     'Executed initial-organizer agent',
+            //     'Executed organize command',
+            //     'Executed idea-lifter agent',
+            //     'Executed representable-valid agent',
+            //     );
+            // }
+            // return resolve(refactoringSteps);
+            // }
+
+            // // Non-zero exit
+            // const stderrText = typeof (result as any).stderr === 'string'
+            // ? (result as any).stderr
+            // : errorBuffer;
+
+            // return reject(new Error(`Refactoring failed with code ${result.exitCode}: ${stderrText}`));
         });
     }
 
