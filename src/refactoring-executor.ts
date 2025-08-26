@@ -1,4 +1,6 @@
-import { spawn } from 'child_process';
+import { execa } from 'execa';
+import ndjson from 'ndjson';
+import { PassThrough } from 'node:stream';
 import path from 'path';
 import { promises as fs } from 'fs';
 
@@ -120,11 +122,11 @@ export class RefactoringExecutor {
             const refactoringSteps: string[] = [];
             
             console.log(`Executing refactoring in ${targetDir}...`);
-            console.log(`Running: claude -p "Run the top-level-refactorer agent" --permission-mode=acceptEdits`);
+            // console.log(`Running: claude -p "Run the top-level-refactorer agent" --permission-mode=acceptEdits`);
             console.log(`claude code path is ${this.claudeCodePath}`);
             
             // Run claude with project mode and auto-accept edits
-            const childProcess = spawn(this.claudeCodePath, [
+            const childProcess = execa(this.claudeCodePath, [
                 '-p',
                 'Run the representable-valid agent',
                 '--permission-mode=acceptEdits',
@@ -136,16 +138,27 @@ export class RefactoringExecutor {
                 env: {
                     ...process.env,
                     // Pass Nia API key if available
-                    ...(this.niaApiKey ? { NIA_API_KEY: this.niaApiKey } : {})
-                }
+                    ...(this.niaApiKey ? { NIA_API_KEY: this.niaApiKey } : {}),
+                    NO_COLOR: '1',
+                    FORCE_COLOR: '0',
+                },
+                stdout: ['pipe', 'inherit'],   // mirror to terminal + give us a stream
+                stderr: ['pipe', 'inherit'],   // same for stderr
+                reject: false,                 // don't throw on nonzero exit
+                timeout: 60 * 60 * 1000,
+                buffer: false,
             });
 
-            console.log(`childProcess is ${JSON.stringify(childProcess)}`);
+            // Mirror child logs to the parent TTY
+            childProcess.stdout?.pipe(process.stdout);
+            childProcess.stderr?.pipe(process.stderr);
+
 
             let outputBuffer = '';
             let errorBuffer = '';
 
             childProcess.stdout.on('data', (data: Buffer) => {
+                console.log('STDOUT data received');
                 const output = data.toString();
                 outputBuffer += output;
                 console.log('[Claude]:', output);
@@ -162,6 +175,7 @@ export class RefactoringExecutor {
             });
 
             childProcess.stderr.on('data', (data: Buffer) => {
+                console.log('STDERR data received');
                 const error = data.toString();
                 errorBuffer += error;
                 console.error('[Claude Error]:', error);
@@ -187,12 +201,6 @@ export class RefactoringExecutor {
             childProcess.on('error', (error: Error) => {
                 reject(new Error(`Failed to start refactoring process: ${error.message}`));
             });
-
-            // Set a timeout for the refactoring process (1 hour)
-            setTimeout(() => {
-                childProcess.kill();
-                reject(new Error('Refactoring process timed out after 1 hour'));
-            }, 60 * 60 * 1000);
         });
     }
 
