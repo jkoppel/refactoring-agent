@@ -99,7 +99,8 @@ export async function handleGithubFullWorkflowTool(
                 // Step 6: Create branch and push changes
                 console.log('Step 6: Pushing changes to fork...');
                 const branchName = `refactor/auto-${Date.now()}`;
-                await githubClient.pushChanges(git, branchName);
+                const excludeFiles = refactoringExecutor.getCopiedFiles();
+                await githubClient.pushChanges(git, branchName, excludeFiles);
 
                 // Step 7: Create pull request
                 console.log('Step 7: Creating pull request...');
