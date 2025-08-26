@@ -146,9 +146,14 @@ export class RefactoringExecutor {
                     timeout: 60 * 60 * 1000,
                 });
 
+                // Create a passthrough stream to duplicate stdout
+                const passThrough = new PassThrough();
+                childProcess.stdout?.pipe(passThrough, { end: false });
+                childProcess.stdout?.pipe(process.stdout, { end: false });
+
                 // Parse NDJSON output for refactoring steps
                 const parser = ndjson.parse({ strict: false });
-                childProcess.stdout?.pipe(parser);
+                passThrough.pipe(parser);
 
                 parser.on('data', (evt: any) => {
                     const msg: string | undefined = evt?.message ?? evt?.text ?? evt?.event ?? evt?.data;
