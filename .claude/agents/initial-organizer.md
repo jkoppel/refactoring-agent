@@ -1,6 +1,6 @@
 ---
 name: initial-organizer
-description: When invoked
+description: Organizes code files to make them more readable.
 model: opus
 ---
 
