@@ -1,4 +1,3 @@
-
 ---
 name: initial-organizer
 description: When invoked
@@ -114,7 +113,7 @@ void checkExpression(...) { ... }
 void checkStatement(...) { ... }
 
 Unlike the previous idea, each labeled cluster may not correspond to a distinct design intention. Nonetheless, this helps greatly in quickly digesting what is in a file. And if you ever want to split this file into several, the thinking has been done for you.
- 
+
 
 
 # Should You Split That File?

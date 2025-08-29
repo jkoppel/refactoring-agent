@@ -1,4 +1,3 @@
-
 ---
 name: idea-lifter
 description: When invoked
